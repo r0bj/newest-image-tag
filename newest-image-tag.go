@@ -62,8 +62,8 @@ type ManifestHistoryItem struct {
 
 // ImageParts : containts image parts
 type ImageParts struct {
-	Host string
-	Path string
+	host string
+	path string
 }
 
 // HTTPResponse : containts HTTP response data
@@ -74,9 +74,9 @@ type HTTPResponse struct {
 
 // ImageTag : containts image tags create time
 type ImageTag struct {
-	Tag string
-	Date time.Time
-	Error error
+	tag string
+	date time.Time
+	err error
 }
 
 func parseImageName(imageName string) (ImageParts, error) {
@@ -87,8 +87,8 @@ func parseImageName(imageName string) (ImageParts, error) {
 		return imageParts, fmt.Errorf("Image name parse error, not all required parts detected")
 	}
 
-	imageParts.Host = parts[0]
-    imageParts.Path = strings.Join(parts[1:], "/")
+	imageParts.host = parts[0]
+    imageParts.path = strings.Join(parts[1:], "/")
 
 	return imageParts, nil
 }
@@ -96,10 +96,11 @@ func parseImageName(imageName string) (ImageParts, error) {
 func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPResponse) {
 	var msg HTTPResponse
 
-	request := gorequest.New()
-
+	var request *gorequest.SuperAgent
 	if basicAuthUser != "" && basicAuthPassword != "" {
 		request = gorequest.New().SetBasicAuth(basicAuthUser, basicAuthPassword)
+	} else {
+		request = gorequest.New()
 	}
 
 	// resp, body, errs := request.Get(url).Set("Accept", "application/vnd.docker.distribution.manifest.v1+prettyjws").End()
@@ -133,7 +134,7 @@ func getTagsList(image, username, password string) (TagList, error) {
 	}
 
 	response := make(chan HTTPResponse)
-	url := "https://" + imageParts.Host + "/v2/" + imageParts.Path + "/tags/list"
+	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/tags/list"
 	go httpGet(url, username, password, response)
 
 	select {
@@ -163,7 +164,7 @@ func getTagManifest(image, tag, username, password string) (TagManifest, error) 
 	}
 
 	response := make(chan HTTPResponse)
-	url := "https://" + imageParts.Host + "/v2/" + imageParts.Path + "/manifests/" + tag
+	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/manifests/" + tag
 	go httpGet(url, username, password, response)
 
 	select {
@@ -229,7 +230,7 @@ func getTagDate(image, tagName, username, password string) (time.Time, error) {
 func getTagDateUsingCache(image, username, password string, redisClient *redis.Client, tags <-chan string, results chan<- ImageTag) {
 	for tagName := range tags {
 		var imageTag ImageTag
-		imageTag.Tag = tagName
+		imageTag.tag = tagName
 
 		imageWithTag := image + ":" + tagName
 
@@ -238,22 +239,22 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 			if err == redis.Nil {
 				log.Debugf("Image tag %s not in cache, calling container registry", imageWithTag)
 
-				imageTag.Date, err = getTagDate(image, tagName, username, password)
+				imageTag.date, err = getTagDate(image, tagName, username, password)
 				if err != nil {
-					imageTag.Error = err
+					imageTag.err = err
 					results <- imageTag
 					break
 				}
 
-				err = redisClient.Set(imageWithTag, imageTag.Date.Format(time.RFC3339Nano), time.Duration(*redisKeyTTL) * time.Second).Err()
+				err = redisClient.Set(imageWithTag, imageTag.date.Format(time.RFC3339Nano), time.Duration(*redisKeyTTL) * time.Second).Err()
 				if err != nil {
-					imageTag.Error = err
+					imageTag.err = err
 					results <- imageTag
 					break
 				}
 
 			} else if err != nil {
-				imageTag.Error = err
+				imageTag.err = err
 				results <- imageTag
 				break
 			} else {
@@ -261,18 +262,18 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 
 				date, err := time.Parse(time.RFC3339Nano, dateStr)
 				if err != nil {
-					imageTag.Error = err
+					imageTag.err = err
 					results <- imageTag
 					break
 				}
 
-				imageTag.Date = date
+				imageTag.date = date
 			}
 		} else {
 			var err error
-			imageTag.Date, err = getTagDate(image, tagName, username, password)
+			imageTag.date, err = getTagDate(image, tagName, username, password)
 			if err != nil {
-				imageTag.Error = err
+				imageTag.err = err
 				results <- imageTag
 				break
 			}
@@ -304,17 +305,17 @@ func getNewestTag(image, username, password string, redisClient *redis.Client) (
 	var tags []ImageTag
 	for a := 1; a <= numJobs; a++ {
 		tag := <-results
-		if tag.Error != nil {
-			return "", tag.Error
+		if tag.err != nil {
+			return "", tag.err
 		}
 		tags = append(tags, tag)
 	}
 
 	sort.Slice(tags, func(i, j int) bool {
-	    return tags[i].Date.After(tags[j].Date)
+	    return tags[i].date.After(tags[j].date)
 	})
 
-	return tags[0].Tag, nil
+	return tags[0].tag, nil
 }
 
 func main() {
