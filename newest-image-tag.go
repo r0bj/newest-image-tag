@@ -99,7 +99,8 @@ func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPR
 		request = gorequest.New().SetBasicAuth(basicAuthUser, basicAuthPassword)
 	}
 
-	resp, body, errs := request.Get(url).Set("Accept", "application/vnd.docker.distribution.manifest.v1+prettyjws").End()
+	// resp, body, errs := request.Get(url).Set("Accept", "application/vnd.docker.distribution.manifest.v1+prettyjws").End()
+	resp, body, errs := request.Get(url).End()
 
 	if errs != nil {
 		var errsStr []string
