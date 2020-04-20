@@ -53,12 +53,12 @@ type TagManifest struct {
 	} `json:"history"`
 }
 
-// ManifestHistory : containts manifest history data
+// ManifestHistoryItem : containts manifest history data
 type ManifestHistoryItem struct {
 	Created string `json:"created"`
 }
 
-// ImageName : containts image parts
+// ImageParts : containts image parts
 type ImageParts struct {
 	Host string
 	Path string
@@ -70,7 +70,7 @@ type HTTPResponse struct {
 	err error
 }
 
-// Imagetags : containts image tags create time
+// ImageTag : containts image tags create time
 type ImageTag struct {
 	Tag string
 	Date time.Time
