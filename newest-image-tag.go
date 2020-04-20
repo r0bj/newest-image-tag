@@ -34,8 +34,9 @@ var (
 	password = kingpin.Flag("password", "Password for container registry.").Short('p').String()
 	passwordFile = kingpin.Flag("password-file", "Path to file with password for container registry.").String()
 	verbose = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
-	tagWithImage = kingpin.Flag("full-image", "Return tag with image name.").Short('f').Default("true").Bool()
+	tagOnly = kingpin.Flag("tag-only", "Return only tag without image name.").Bool()
 	cache = kingpin.Flag("cache", "Don't use redis as a cache.").Default("true").Bool()
+	threads = kingpin.Flag("threads", "Number of threads for accessing registry.").Default("30").Int()
 	image = kingpin.Arg("image", "Image name.").Required().String()
 )
 
@@ -74,6 +75,7 @@ type HTTPResponse struct {
 type ImageTag struct {
 	Tag string
 	Date time.Time
+	Error error
 }
 
 func parseImageName(imageName string) (ImageParts, error) {
@@ -219,48 +221,60 @@ func getTagDate(image, tagName, username, password string) (time.Time, error) {
 	return date, nil
 }
 
-func getTagDateUsingCache(image, tagName, username, password string, redisClient *redis.Client) (ImageTag, error) {
-	var imageTag ImageTag
-	imageTag.Tag = tagName
+func getTagDateUsingCache(image, username, password string, redisClient *redis.Client, tags <-chan string, results chan<- ImageTag) {
+	for tagName := range tags {
+		var imageTag ImageTag
+		imageTag.Tag = tagName
 
-	imageWithTag := image + ":" + tagName
-		
-	if *cache {
-		dateStr, err := redisClient.Get(imageWithTag).Result()
-		if err == redis.Nil {
-			log.Debugf("Image tag %s not in cache, calling container registry", imageWithTag)
+		imageWithTag := image + ":" + tagName
 
+		if *cache {
+			dateStr, err := redisClient.Get(imageWithTag).Result()
+			if err == redis.Nil {
+				log.Debugf("Image tag %s not in cache, calling container registry", imageWithTag)
+
+				imageTag.Date, err = getTagDate(image, tagName, username, password)
+				if err != nil {
+					imageTag.Error = err
+					results <- imageTag
+					break
+				}
+
+				err = redisClient.Set(imageWithTag, imageTag.Date.Format(time.RFC3339Nano), time.Duration(*redisKeyTTL) * time.Second).Err()
+				if err != nil {
+					imageTag.Error = err
+					results <- imageTag
+					break
+				}
+
+			} else if err != nil {
+				imageTag.Error = err
+				results <- imageTag
+				break
+			} else {
+				log.Debugf("Image tag %s present in cache", imageWithTag)
+
+				date, err := time.Parse(time.RFC3339Nano, dateStr)
+				if err != nil {
+					imageTag.Error = err
+					results <- imageTag
+					break
+				}
+
+				imageTag.Date = date
+			}
+		} else {
+			var err error
 			imageTag.Date, err = getTagDate(image, tagName, username, password)
 			if err != nil {
-				return imageTag, err
+				imageTag.Error = err
+				results <- imageTag
+				break
 			}
-
-			err = redisClient.Set(imageWithTag, imageTag.Date.Format(time.RFC3339Nano), time.Duration(*redisKeyTTL) * time.Second).Err()
-			if err != nil {
-				return imageTag, err
-			}
-
-		} else if err != nil {
-			return imageTag, err
-		} else {
-			log.Debugf("Image tag %s present in cache", imageWithTag)
-
-			date, err := time.Parse(time.RFC3339Nano, dateStr)
-			if err != nil {
-				return imageTag, err
-			}
-
-			imageTag.Date = date
 		}
-	} else {
-		var err error
-		imageTag.Date, err = getTagDate(image, tagName, username, password)
-		if err != nil {
-			return imageTag, err
-		}		
-	}
 
-	return imageTag, nil
+		results <- imageTag
+	}
 }
 
 func getNewestTag(image, username, password string, redisClient *redis.Client) (string, error) {
@@ -269,13 +283,25 @@ func getNewestTag(image, username, password string, redisClient *redis.Client) (
 		return "", err
 	}
 
-	var tags []ImageTag
-	for _, tagName := range tagList.Tags {
-		tag, err := getTagDateUsingCache(image, tagName, username, password, redisClient)
-		if err != nil {
-			return "", err
-		}
+	numJobs := len(tagList.Tags)
+	jobs := make(chan string, numJobs)
+	results := make(chan ImageTag, numJobs)
 
+	for w := 1; w <= *threads; w++ {
+		go getTagDateUsingCache(image, username, password, redisClient, jobs, results)
+	}
+
+	for _, tagName := range tagList.Tags {
+		jobs <- tagName
+	}
+	close(jobs)
+
+	var tags []ImageTag
+	for a := 1; a <= numJobs; a++ {
+		tag := <-results
+		if tag.Error != nil {
+			return "", tag.Error
+		}
 		tags = append(tags, tag)
 	}
 
@@ -322,9 +348,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if *tagWithImage {
-		fmt.Println(*image + ":" + tag)
-	} else {
+	if *tagOnly {
 		fmt.Println(tag)
+	} else {
+		fmt.Println(*image + ":" + tag)
 	}
 }
