@@ -26,7 +26,7 @@ const (
 
 var (
 	redisPassword = kingpin.Flag("redis-password", "Redis password.").Default("").String()
-	redisKeyTTL = kingpin.Flag("redis-key-ttl", "Redis key TTL in seconds.").Default("60").Int()
+	redisKeyTTL = kingpin.Flag("redis-key-ttl", "Redis key TTL in seconds.").Default("604800").Int()
 	redisDB = kingpin.Flag("redis-db", "Redis database.").Default("0").Short('d').Int()
 	redisHost = kingpin.Flag("redis-host", "Redis host address.").Default("localhost").Short('r').String()
 	redisPort = kingpin.Flag("redis-port", "Redis port.").Default("6379").String()
