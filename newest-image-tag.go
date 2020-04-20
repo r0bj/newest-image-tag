@@ -119,7 +119,7 @@ func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPR
 	if resp.StatusCode == 200 {
 		msg.body = body
 	} else {
-		msg.err = fmt.Errorf("HTTP response code: %s", resp.Status)
+		msg.err = fmt.Errorf("URL %s HTTP response code: %s", url, resp.Status)
 	}
 	response <- msg
 }
