@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	ver string = "0.1"
+	ver string = "0.2"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 )
@@ -49,6 +49,7 @@ type TagList struct {
 // TagManifest : containts image tag manifest data
 type TagManifest struct {
 	Name string `json:"name"`
+	SchemaVersion int `json:"schemaVersion"`
 	History []struct {
 		V1Compatibility string `json:"v1Compatibility"`
 	} `json:"history"`
@@ -211,6 +212,10 @@ func getTagDate(image, tagName, username, password string) (time.Time, error) {
 	manifest, err := getTagManifest(image, tagName, username, password)
 	if err != nil {
 		return time.Time{}, err
+	}
+
+	if manifest.SchemaVersion != 1 {
+		return time.Time{}, fmt.Errorf("Wrong image manifest version, should be Image Manifest Version 2, Schema 1: https://docs.docker.com/registry/spec/manifest-v2-1")
 	}
 
 	date, err := getNewestManifestHistoryItem(manifest)
