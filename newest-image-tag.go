@@ -4,7 +4,6 @@
 package main
 
 import (
-	"os"
 	"fmt"
 	"strings"
 	"encoding/json"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	ver string = "0.2"
+	ver string = "0.3"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 )
@@ -34,9 +33,9 @@ var (
 	password = kingpin.Flag("password", "Password for container registry.").Short('p').String()
 	passwordFile = kingpin.Flag("password-file", "Path to file with password for container registry.").String()
 	verbose = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
-	tagOnly = kingpin.Flag("tag-only", "Return only tag without image name.").Bool()
 	cache = kingpin.Flag("cache", "Don't use redis as a cache.").Default("true").Bool()
 	threads = kingpin.Flag("threads", "Number of threads for accessing registry.").Default("30").Int()
+	jsonOutput = kingpin.Flag("json-output", "Generate output in JSON format.").Short('j').Bool()
 	image = kingpin.Arg("image", "Image name.").Required().String()
 )
 
@@ -77,6 +76,13 @@ type ImageTag struct {
 	tag string
 	date time.Time
 	err error
+}
+
+// Output : containts stdout output
+type Output struct {
+	Tag string `json:"tag"`
+	Image string `json:"image"`
+	ImageWithTag string `json:"imageWithTag"`
 }
 
 func parseImageName(imageName string) (ImageParts, error) {
@@ -283,10 +289,13 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 	}
 }
 
-func getNewestTag(image, username, password string, redisClient *redis.Client) (string, error) {
+func getNewestTag(image, username, password string, redisClient *redis.Client) (Output, error) {
+	var output Output
+	output.Image = image
+
 	tagList, err := getTagsList(image, username, password)
 	if err != nil {
-		return "", err
+		return output, err
 	}
 
 	numJobs := len(tagList.Tags)
@@ -306,7 +315,7 @@ func getNewestTag(image, username, password string, redisClient *redis.Client) (
 	for a := 1; a <= numJobs; a++ {
 		tag := <-results
 		if tag.err != nil {
-			return "", tag.err
+			return output, tag.err
 		}
 		tags = append(tags, tag)
 	}
@@ -315,7 +324,9 @@ func getNewestTag(image, username, password string, redisClient *redis.Client) (
 	    return tags[i].date.After(tags[j].date)
 	})
 
-	return tags[0].tag, nil
+	output.Tag = tags[0].tag
+	output.ImageWithTag = image + ":" + tags[0].tag
+	return output, nil
 }
 
 func main() {
@@ -323,7 +334,6 @@ func main() {
 	customFormatter.TimestampFormat = logDateLayout
 	log.SetFormatter(customFormatter)
 	customFormatter.FullTimestamp = true
-	log.SetOutput(os.Stdout)
 
 	kingpin.Version(ver)
 	kingpin.Parse()
@@ -349,14 +359,18 @@ func main() {
 		DB: *redisDB,
 	})
 
-	tag, err := getNewestTag(*image, *username, registryPassword, client)
+	output, err := getNewestTag(*image, *username, registryPassword, client)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if *tagOnly {
-		fmt.Println(tag)
+	if *jsonOutput {
+		o, _ := json.Marshal(output)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(string(o))
 	} else {
-		fmt.Println(*image + ":" + tag)
+		fmt.Println(output.ImageWithTag)
 	}
 }
