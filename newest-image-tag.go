@@ -365,11 +365,12 @@ func main() {
 	}
 
 	if *jsonOutput {
-		o, _ := json.Marshal(output)
+		outputJson, _ := json.Marshal(output)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(string(o))
+
+		fmt.Println(string(outputJson))
 	} else {
 		fmt.Println(output.ImageWithTag)
 	}
