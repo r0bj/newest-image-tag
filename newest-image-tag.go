@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ver string = "0.3"
+	ver string = "0.4"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 )
@@ -29,8 +29,8 @@ var (
 	redisDB = kingpin.Flag("redis-db", "Redis database.").Default("0").Short('d').Int()
 	redisHost = kingpin.Flag("redis-host", "Redis host address.").Default("localhost").Short('r').String()
 	redisPort = kingpin.Flag("redis-port", "Redis port.").Default("6379").String()
-	username = kingpin.Flag("username", "Username for container registry.").Short('u').String()
-	password = kingpin.Flag("password", "Password for container registry.").Short('p').String()
+	username = kingpin.Flag("username", "Username for container registry.").Default("anonymous").Short('u').String()
+	password = kingpin.Flag("password", "Password for container registry.").Default("anonymous").Short('p').String()
 	passwordFile = kingpin.Flag("password-file", "Path to file with password for container registry.").String()
 	verbose = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
 	cache = kingpin.Flag("cache", "Don't use redis as a cache.").Default("true").Bool()
