@@ -18,9 +18,11 @@ import (
 )
 
 const (
-	ver string = "0.4"
+	ver string = "0.5"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
+	retries int = 3
+	sleepInterval int = 3
 )
 
 var (
@@ -115,7 +117,7 @@ func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPR
 	if errs != nil {
 		var errsStr []string
 		for _, e := range errs {
-			errsStr = append(errsStr, fmt.Sprintf("%s", e))
+			errsStr = append(errsStr, e.Error())
 		}
 		msg.err = fmt.Errorf("%s", strings.Join(errsStr, ", "))
 		response <- msg
@@ -141,20 +143,38 @@ func getTagsList(image, username, password string) (TagList, error) {
 
 	response := make(chan HTTPResponse)
 	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/tags/list"
-	go httpGet(url, username, password, response)
 
-	select {
-	case msg := <-response:
-		if msg.err == nil {
-			err := json.Unmarshal([]byte(msg.body), &tagList)
-			if err != nil {
-				return tagList, fmt.Errorf("unmarshall error: %v", err)
+	var responseError error
+	Loop:
+		for i := 1; i <= retries; i++ {
+			if i != 1 {
+				log.Debugf("Retrying request %s", url)
+				time.Sleep(time.Second * time.Duration(sleepInterval))
 			}
-		} else {
-			return tagList, msg.err
+			go httpGet(url, username, password, response)
+
+			select {
+			case msg := <-response:
+				if msg.err == nil {
+					err := json.Unmarshal([]byte(msg.body), &tagList)
+					if err == nil {
+						break Loop
+					} else {
+						responseError = fmt.Errorf("Unmarshal error: %v", err)
+						continue Loop
+					}
+				} else {
+					responseError = msg.err
+					continue Loop
+				}
+			case <-time.After(time.Second * time.Duration(httpTimeout)):
+				responseError = fmt.Errorf("%s: container registry http timeout", url)
+				continue Loop
+			}
 		}
-	case <-time.After(time.Second * time.Duration(httpTimeout)):
-		return tagList, fmt.Errorf("%s: container registry http timeout", url)
+
+	if responseError != nil {
+		return tagList, responseError
 	}
 
 	return tagList, nil
@@ -171,20 +191,39 @@ func getTagManifest(image, tag, username, password string) (TagManifest, error) 
 
 	response := make(chan HTTPResponse)
 	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/manifests/" + tag
-	go httpGet(url, username, password, response)
 
-	select {
-	case msg := <-response:
-		if msg.err == nil {
-			err := json.Unmarshal([]byte(msg.body), &tagManifest)
-			if err != nil {
-				return tagManifest, fmt.Errorf("unmarshall error: %v", err)
+	var responseError error
+	Loop:
+		for i := 1; i <= retries; i++ {
+			if i != 1 {
+				log.Debugf("Retrying request %s", url)
+				time.Sleep(time.Second * time.Duration(sleepInterval))
 			}
-		} else {
-			return tagManifest, msg.err
+
+			go httpGet(url, username, password, response)
+
+			select {
+			case msg := <-response:
+				if msg.err == nil {
+					err := json.Unmarshal([]byte(msg.body), &tagManifest)
+					if err == nil {
+						break Loop
+					} else {
+						responseError = fmt.Errorf("Unmarshal error: %v", err)
+						continue Loop
+					}
+				} else {
+					responseError = msg.err
+					continue Loop
+				}
+			case <-time.After(time.Second * time.Duration(httpTimeout)):
+				responseError = fmt.Errorf("%s: container registry http timeout", url)
+				continue Loop
+			}
 		}
-	case <-time.After(time.Second * time.Duration(httpTimeout)):
-		return tagManifest, fmt.Errorf("%s: container registry http timeout", url)
+
+	if responseError != nil {
+		return tagManifest, responseError
 	}
 
 	return tagManifest, nil
