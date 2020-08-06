@@ -35,7 +35,7 @@ var (
 	password = kingpin.Flag("password", "Password for container registry.").Default("anonymous").Short('p').String()
 	passwordFile = kingpin.Flag("password-file", "Path to file with password for container registry.").String()
 	verbose = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
-	cache = kingpin.Flag("cache", "Don't use redis as a cache.").Default("true").Bool()
+	cache = kingpin.Flag("cache", "Use redis as a cache.").Bool()
 	threads = kingpin.Flag("threads", "Number of threads for accessing registry.").Default("30").Int()
 	jsonOutput = kingpin.Flag("json-output", "Generate output in JSON format.").Short('j').Bool()
 	image = kingpin.Arg("image", "Image name.").Required().String()
@@ -299,7 +299,7 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 				}
 
 			} else if err != nil {
-				imageTag.err = err
+				imageTag.err = fmt.Errorf("Cannot connect to redis: %v", err)
 				results <- imageTag
 				break
 			} else {
