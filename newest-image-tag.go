@@ -10,15 +10,15 @@ import (
 	"time"
 	"sort"
 	"io/ioutil"
+	"net/http"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 	log "github.com/sirupsen/logrus"
-	"github.com/parnurzeal/gorequest"
 	"github.com/go-redis/redis/v7"
 )
 
 const (
-	ver string = "0.7"
+	ver string = "0.8"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 	retries int = 3
@@ -71,6 +71,7 @@ type ImageParts struct {
 type HTTPResponse struct {
 	body string
 	err error
+	statusCode int
 }
 
 // ImageTag : containts image tags create time
@@ -104,47 +105,43 @@ func parseImageName(imageName string) (ImageParts, error) {
 func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPResponse) {
 	var msg HTTPResponse
 
-	var request *gorequest.SuperAgent
-	if basicAuthUser != "" && basicAuthPassword != "" {
-		request = gorequest.New().SetBasicAuth(basicAuthUser, basicAuthPassword)
-	} else {
-		request = gorequest.New()
-	}
-
-	// resp, body, errs := request.Get(url).Set("Accept", "application/vnd.docker.distribution.manifest.v1+prettyjws").End()
-	resp, body, errs := request.Get(url).End()
-
-	if errs != nil {
-		var errsStr []string
-		for _, e := range errs {
-			errsStr = append(errsStr, e.Error())
-		}
-		msg.err = fmt.Errorf("%s", strings.Join(errsStr, ", "))
-		response <- msg
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		msg.err = err
 		return
 	}
 
-	if resp.StatusCode == 200 {
-		msg.body = body
-	} else {
-		msg.err = fmt.Errorf("URL %s HTTP response code: %s", url, resp.Status)
+	if basicAuthUser != "" && basicAuthPassword != "" {
+		req.SetBasicAuth(basicAuthUser, basicAuthPassword)
 	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		msg.err = err
+		return
+	}
+
+	msg.statusCode = resp.StatusCode
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		msg.err = err
+		return
+	}
+
+	msg.body = string(body)
 	response <- msg
+
+	return
 }
 
-func getTagsList(image, username, password string) (TagList, error) {
-	var tagList TagList
-	log.Debugf("Getting container registry tags list for %s", image)
-
-	imageParts, err := parseImageName(image)
-	if err != nil {
-		return tagList, err
-	}
+func retryGetRequest(url, username, password string) (string, error) {
+	var responseError error
+	var body string
 
 	response := make(chan HTTPResponse)
-	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/tags/list"
-
-	var responseError error
 	Loop:
 		for i := 1; i <= retries; i++ {
 			if i != 1 {
@@ -156,25 +153,50 @@ func getTagsList(image, username, password string) (TagList, error) {
 			select {
 			case msg := <-response:
 				if msg.err == nil {
-					err := json.Unmarshal([]byte(msg.body), &tagList)
-					if err == nil {
+					if msg.statusCode == 200 {
+						body = msg.body
 						break Loop
-					} else {
-						responseError = fmt.Errorf("Unmarshal error: %v", err)
+					} else if msg.statusCode >= 500 {
+						responseError = fmt.Errorf("%s: HTTP response code: %d", url, msg.statusCode)
 						continue Loop
+					} else {
+						responseError = fmt.Errorf("%s: HTTP response code: %d", url, msg.statusCode)
+						break Loop
 					}
 				} else {
 					responseError = msg.err
-					continue Loop
+					break Loop
 				}
 			case <-time.After(time.Second * time.Duration(httpTimeout)):
-				responseError = fmt.Errorf("%s: container registry http timeout", url)
+				responseError = fmt.Errorf("%s: HTTP response timeout", url)
 				continue Loop
 			}
 		}
 
 	if responseError != nil {
-		return tagList, responseError
+		return "", responseError
+	}
+
+	return body, nil
+}
+
+func getTagsList(image, username, password string) (TagList, error) {
+	var tagList TagList
+	log.Debugf("Getting container registry tags list for %s", image)
+
+	imageParts, err := parseImageName(image)
+	if err != nil {
+		return tagList, err
+	}
+
+	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/tags/list"
+	body, err := retryGetRequest(url, username, password)
+	if err != nil {
+		return tagList, err
+	}
+
+	if err := json.Unmarshal([]byte(body), &tagList); err != nil {
+		return tagList, fmt.Errorf("Unmarshal body failed: %v", err)
 	}
 
 	return tagList, nil
@@ -189,41 +211,14 @@ func getTagManifest(image, tag, username, password string) (TagManifest, error) 
 		return tagManifest, err
 	}
 
-	response := make(chan HTTPResponse)
 	url := "https://" + imageParts.host + "/v2/" + imageParts.path + "/manifests/" + tag
+	body, err := retryGetRequest(url, username, password)
+	if err != nil {
+		return tagManifest, err
+	}
 
-	var responseError error
-	Loop:
-		for i := 1; i <= retries; i++ {
-			if i != 1 {
-				log.Debugf("Retrying request %s", url)
-				time.Sleep(time.Second * time.Duration(sleepInterval))
-			}
-
-			go httpGet(url, username, password, response)
-
-			select {
-			case msg := <-response:
-				if msg.err == nil {
-					err := json.Unmarshal([]byte(msg.body), &tagManifest)
-					if err == nil {
-						break Loop
-					} else {
-						responseError = fmt.Errorf("Unmarshal error: %v", err)
-						continue Loop
-					}
-				} else {
-					responseError = msg.err
-					continue Loop
-				}
-			case <-time.After(time.Second * time.Duration(httpTimeout)):
-				responseError = fmt.Errorf("%s: container registry http timeout", url)
-				continue Loop
-			}
-		}
-
-	if responseError != nil {
-		return tagManifest, responseError
+	if err := json.Unmarshal([]byte(body), &tagManifest); err != nil {
+		return tagManifest, fmt.Errorf("Unmarshal body failed: %v", err)
 	}
 
 	return tagManifest, nil
