@@ -18,11 +18,10 @@ import (
 )
 
 const (
-	ver string = "0.10"
+	ver string = "0.11"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
-	retries int = 3
-	sleepInterval int = 3
+	dockerRegistryDomain = "registry.hub.docker.com"
 )
 
 var (
@@ -38,6 +37,7 @@ var (
 	cache = kingpin.Flag("cache", "Use redis as a cache.").Bool()
 	threads = kingpin.Flag("threads", "Number of threads for accessing registry.").Default("30").Int()
 	jsonOutput = kingpin.Flag("json-output", "Generate output in JSON format.").Short('j').Bool()
+	retries = kingpin.Flag("retries", "Number of retries to access container registry.").Default("10").Int()
 	image = kingpin.Arg("image", "Image name.").Required().String()
 )
 
@@ -92,12 +92,21 @@ func parseImageName(imageName string) (ImageParts, error) {
 	var imageParts ImageParts 
 
 	parts := strings.Split(imageName, "/")
+	// Docker Hub official images ("library" prefix)
 	if len(parts) < 2 {
-		return imageParts, fmt.Errorf("Image name parse error, not all required parts detected")
+		imageParts.host = dockerRegistryDomain
+		imageParts.path = "library/" + parts[0]
+	} else {
+		// Regular image with domain name
+		if strings.Contains(parts[0], ".") {
+			imageParts.host = parts[0]
+			imageParts.path = strings.Join(parts[1:], "/")
+		// Docker Hub images
+		} else {
+			imageParts.host = dockerRegistryDomain
+			imageParts.path = strings.Join(parts, "/")
+		}
 	}
-
-	imageParts.host = parts[0]
-    imageParts.path = strings.Join(parts[1:], "/")
 
 	return imageParts, nil
 }
@@ -143,10 +152,10 @@ func retryGetRequest(url, username, password string) (string, error) {
 
 	response := make(chan HTTPResponse)
 	Loop:
-		for i := 1; i <= retries; i++ {
-			if i != 1 {
-				log.Debugf("Retrying request %s", url)
-				time.Sleep(time.Second * time.Duration(sleepInterval))
+		for retry := 0; retry <= *retries; retry++ {
+			if retry != 0 {
+				log.Debugf("Retrying (%d) request %s", retry, url)
+				time.Sleep(time.Second * time.Duration(retry))
 			}
 			go httpGet(url, username, password, response)
 
