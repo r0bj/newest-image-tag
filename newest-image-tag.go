@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ver string = "0.11"
+	ver string = "0.12"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 	dockerRegistryDomain = "registry.hub.docker.com"
@@ -166,7 +166,7 @@ func retryGetRequest(url, username, password string) (string, error) {
 						body = msg.body
 						break Loop
 					} else if msg.statusCode >= 500 {
-						responseError = fmt.Errorf("%s: HTTP response code: %d", url, msg.statusCode)
+						responseError = fmt.Errorf("%s: HTTP response code (%d retries): %d", url, retry, msg.statusCode)
 						continue Loop
 					} else {
 						responseError = fmt.Errorf("%s: HTTP response code: %d", url, msg.statusCode)
@@ -177,7 +177,7 @@ func retryGetRequest(url, username, password string) (string, error) {
 					break Loop
 				}
 			case <-time.After(time.Second * time.Duration(httpTimeout)):
-				responseError = fmt.Errorf("%s: HTTP response timeout", url)
+				responseError = fmt.Errorf("%s: HTTP response timeout (%d retries)", url, retry)
 				continue Loop
 			}
 		}
@@ -332,6 +332,24 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 	}
 }
 
+// if two or more image tags have the same date, sort tags by name and return first
+func selectTagFromConflictingTags(tags []ImageTag) string {
+	tagList := []string{tags[0].tag}
+
+	for _, tag :=range tags {
+		if tags[0].tag != tag.tag {
+			if tags[0].date == tag.date {
+				log.Debugf("Image newest tags with identical timestamp detected: %s (%s), %s (%s)", tags[0].tag, tags[0].date, tag.tag, tag.date)
+				tagList = append(tagList, tag.tag)
+			}
+		}
+	}
+
+	sort.Strings(tagList)
+
+	return tagList[0]
+}
+
 func getNewestTag(image, username, password string, redisClient *redis.Client) (Output, error) {
 	var output Output
 	output.Image = image
@@ -367,8 +385,10 @@ func getNewestTag(image, username, password string, redisClient *redis.Client) (
 	    return tags[i].date.After(tags[j].date)
 	})
 
-	output.Tag = tags[0].tag
-	output.ImageWithTag = image + ":" + tags[0].tag
+	newestTag := selectTagFromConflictingTags(tags)
+
+	output.Tag = newestTag
+	output.ImageWithTag = image + ":" + newestTag
 	return output, nil
 }
 
