@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ver string = "0.12"
+	ver string = "0.13"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 	dockerRegistryDomain = "registry.hub.docker.com"
@@ -163,6 +163,7 @@ func retryGetRequest(url, username, password string) (string, error) {
 			case msg := <-response:
 				if msg.err == nil {
 					if msg.statusCode == 200 {
+						responseError = nil
 						body = msg.body
 						break Loop
 					} else if msg.statusCode >= 500 {
