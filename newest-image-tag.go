@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ver string = "0.13"
+	ver string = "0.14"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 	dockerRegistryDomain = "registry.hub.docker.com"
@@ -293,31 +293,37 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 				if err != nil {
 					imageTag.err = err
 					results <- imageTag
-					break
+					continue
 				}
 
 				err = redisClient.Set(imageWithTag, imageTag.date.Format(time.RFC3339Nano), time.Duration(*redisKeyTTL) * time.Second).Err()
 				if err != nil {
-					imageTag.err = err
-					results <- imageTag
-					break
+					log.Warnf("Cannot write tag %s to redis: %v", tagName, err)
 				}
-
 			} else if err != nil {
-				imageTag.err = fmt.Errorf("Cannot connect to redis: %v", err)
-				results <- imageTag
-				break
-			} else {
-				log.Debugf("Image tag %s present in cache", imageWithTag)
+				log.Warnf("Cannot connect to redis: %v", err)
+				log.Debugf("Calling container registry for tag %s", imageWithTag)
 
-				date, err := time.Parse(time.RFC3339Nano, dateStr)
+				imageTag.date, err = getTagDate(image, tagName, username, password)
 				if err != nil {
 					imageTag.err = err
 					results <- imageTag
-					break
+					continue
 				}
 
-				imageTag.date = date
+				err = redisClient.Set(imageWithTag, imageTag.date.Format(time.RFC3339Nano), time.Duration(*redisKeyTTL) * time.Second).Err()
+				if err != nil {
+					log.Warnf("Cannot write tag %s to redis: %v", tagName, err)
+				}
+			} else {
+				log.Debugf("Image tag %s present in cache", imageWithTag)
+
+				imageTag.date, err = time.Parse(time.RFC3339Nano, dateStr)
+				if err != nil {
+					imageTag.err = err
+					results <- imageTag
+					continue
+				}
 			}
 		} else {
 			var err error
@@ -325,7 +331,7 @@ func getTagDateUsingCache(image, username, password string, redisClient *redis.C
 			if err != nil {
 				imageTag.err = err
 				results <- imageTag
-				break
+				continue
 			}
 		}
 
