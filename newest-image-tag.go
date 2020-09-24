@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ver string = "0.14"
+	ver string = "0.15"
 	logDateLayout string = "2006-01-02 15:04:05"
 	httpTimeout int = 10
 	dockerRegistryDomain = "registry.hub.docker.com"
@@ -118,6 +118,7 @@ func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPR
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		msg.err = err
+		response <- msg
 		return
 	}
 
@@ -128,6 +129,7 @@ func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPR
 	resp, err := client.Do(req)
 	if err != nil {
 		msg.err = err
+		response <- msg
 		return
 	}
 
@@ -137,6 +139,7 @@ func httpGet(url, basicAuthUser, basicAuthPassword string, response chan<- HTTPR
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		msg.err = err
+		response <- msg
 		return
 	}
 
